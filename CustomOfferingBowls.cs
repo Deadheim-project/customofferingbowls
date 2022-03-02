@@ -5,23 +5,33 @@ using System.Linq;
 using System.IO;
 using UnityEngine;
 using Jotunn.Managers;
+using Jotunn.Utils;
+using System.Collections.Generic;
 
 namespace CustomOfferingBowls
 {
-    [BepInPlugin("Detalhes.CustomOfferingBowls", "CustomOfferingBowls", "1.0.0")]
+    [BepInPlugin(PluginGUID, PluginGUID, Version)]
+    [BepInDependency(Jotunn.Main.ModGuid)]
+    [NetworkCompatibility(CompatibilityLevel.EveryoneMustHaveMod, VersionStrictness.Minor)]
     public class CustomOfferingBowls : BaseUnityPlugin
     {
         public const string PluginGUID = "Detalhes.CustomOfferingBowls";
+        public const string Version = "1.0.3";
         Harmony harmony = new Harmony(PluginGUID);
-        static Root root = new Root();
+        static JsonLoader root = new JsonLoader();
         public static bool hasSpawned = false;
         public static readonly string ModPath = Path.GetDirectoryName(typeof(CustomOfferingBowls).Assembly.Location);
 
-        public static ConfigEntry<string> AltarConfigList;
+        public static ConfigEntry<bool> IsSinglePlayer;
+
+        public static string FileDirectory = BepInEx.Paths.ConfigPath + @"/Detalhes.CustomOfferingBowls.json";
+
 
         private void Awake()
         {
-            AltarConfigList = Config.Bind("Server config", "AltarConfigList", "name=Boss Altar 1;m_itemPrefab=Ruby;m_bossPrefab=Deer;m_bossItems=10;m_bossItem=AmberPearl;m_useItemText=Summon boss;prefabToCopy=woodwall|name=Boss Altar 2;m_itemPrefab=Ruby;m_bossPrefab=Neck;m_bossItems=10;m_bossItem=AmberPearl;m_useItemText=Summon boss;prefabToCopy=stone_wall_4x2",
+            Config.SaveOnConfigSet = true;
+
+            IsSinglePlayer = Config.Bind("Server config", "SpawnAreaConfigList", false,
                     new ConfigDescription("SpawnAreaConfigList", null,
                     new ConfigurationManagerAttributes { IsAdminOnly = true }));
             harmony.PatchAll();
@@ -37,6 +47,7 @@ namespace CustomOfferingBowls
             }
         }
 
+
         [HarmonyPatch(typeof(Player), "OnSpawned")]
         public static class OnSpawned
         {
@@ -44,13 +55,16 @@ namespace CustomOfferingBowls
             {
                 if (hasAwake == true) return;
                 hasAwake = true;
-                AddClonedItems();
+
+                if (IsSinglePlayer.Value) AddClonedItems(root.GetSpawnAreaConfigs());
+                else
+                    ZRoutedRpc.instance.InvokeRoutedRPC(ZRoutedRpc.instance.GetServerPeerID(), "FileSyncCustomOfferingBowls", new ZPackage());
             }
         }
 
         static OfferingBowl BowlToCopy = null;
 
-        public static void AddClonedItems()
+        public static void AddClonedItems(List<Altar> altars)
         {
             var hammer = ObjectDB.instance.m_items.FirstOrDefault(x => x.name == "Hammer");
 
@@ -61,8 +75,7 @@ namespace CustomOfferingBowls
 
             PieceTable table = hammer.GetComponent<ItemDrop>().m_itemData.m_shared.m_buildPieces;
 
-            var list = root.GetSpawnAreaConfigs();
-            foreach (AltarConfig areaConfig in list)
+            foreach (Altar areaConfig in altars)
             {
                 string newName = "COB_" + string.Join("_", areaConfig.name);
 
@@ -78,7 +91,7 @@ namespace CustomOfferingBowls
                 }
 
                 customOfferingBowls.GetComponent<ZNetView>().m_syncInitialScale = true;
-
+                
                 if (BowlToCopy is null)
                 {
                     foreach (OfferingBowl ob in Resources.FindObjectsOfTypeAll(typeof(OfferingBowl)))
@@ -126,8 +139,8 @@ namespace CustomOfferingBowls
                 Piece piece = customOfferingBowls.GetComponent<Piece>();
                 if (piece is null) piece = customOfferingBowls.AddComponent<Piece>();
 
-                piece.m_description = "Offering Bowl";
-                piece.name = customOfferingBowls.name;
+                piece.m_description = areaConfig.m_bossPrefab + " " + areaConfig.m_bossItems + " " + areaConfig.m_bossItem;
+                piece.name = customOfferingBowls.name + " " + areaConfig.name;
 
                 Object.Destroy(customOfferingBowls.GetComponent<Destructible>());
                 Object.Destroy(customOfferingBowls.GetComponent<WearNTear>());
